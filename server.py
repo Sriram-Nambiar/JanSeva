@@ -15,8 +15,12 @@ import pathlib
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from PIL import Image
+
+from scraper.models import ScraperConfig
+from scraper.welfare_scraper import WelfareZimScraper
 
 from core.gemma_harness import GemmaHarness
 from core.privacy import (
@@ -230,3 +234,140 @@ def get_hotspot_qr():
         "url": url,
         "qr_data_uri": pil_to_base64_data_uri(qr_img, format="PNG"),
     }
+
+
+class ScrapeRequest(BaseModel):
+    url: str = "https://myscheme.gov.in"
+    output_name: Optional[str] = "welfare_scraped.zim"
+    title: Optional[str] = "JanSeva Scraped Welfare Schemes"
+    description: Optional[str] = "Offline openZIM welfare directory for Kiwix Desktop"
+    language: str = "eng"
+    max_pages: int = 15
+    depth: int = 2
+    curated_pack: bool = False
+
+
+@app.post("/api/scrape-to-zim")
+def trigger_scrape_to_zim(payload: ScrapeRequest):
+    """Scrape welfare portal and compile directly to Kiwix openZIM archive."""
+    packs_dir = ROOT_DIR / "packs"
+    packs_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = (payload.output_name or "welfare_scraped.zim").strip()
+    if not safe_name.endswith(".zim"):
+        safe_name += ".zim"
+    out_file = packs_dir / safe_name
+
+    scraper = WelfareZimScraper()
+
+    try:
+        if payload.curated_pack:
+            compiled = scraper.generate_curated_welfare_zim(
+                output_path=out_file,
+                title=payload.title or "JanSeva Curated Welfare Directory",
+                lang=payload.language or "eng",
+            )
+            return {
+                "status": "success",
+                "filename": compiled.name,
+                "filepath": str(compiled.resolve()),
+                "filesize_kb": round(compiled.stat().st_size / 1024, 1),
+                "article_count": 10,
+                "message": "Curated welfare pack compiled into openZIM archive.",
+            }
+
+        config = ScraperConfig(
+            seed_url=payload.url,
+            output_path=out_file,
+            title=payload.title or "JanSeva Scraped Welfare Schemes",
+            description=payload.description or "Offline openZIM welfare directory",
+            language=payload.language or "eng",
+            max_pages=payload.max_pages,
+            max_depth=payload.depth,
+            offline_fallback=True,
+        )
+
+        res = scraper.crawl_and_compile(config)
+        return {
+            "status": "success",
+            "filename": res["zim_filename"],
+            "filepath": res["zim_path"],
+            "filesize_kb": res["size_kb"],
+            "article_count": res["article_count"],
+            "duration_seconds": res["duration_seconds"],
+            "message": f"Successfully scraped {res['article_count']} schemes and compiled into {res['zim_filename']}",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scraped-packs")
+def list_scraped_packs():
+    """List all available .zim files in packs directory."""
+    packs_dir = ROOT_DIR / "packs"
+    if not packs_dir.exists():
+        return {"packs": []}
+
+    packs = []
+    scraper = WelfareZimScraper()
+
+    for p in packs_dir.glob("*.zim"):
+        try:
+            info = scraper.inspect_zim(p)
+            packs.append({
+                "filename": p.name,
+                "filesize_kb": info["filesize_kb"],
+                "article_count": info["article_count"],
+                "has_fulltext_index": info["has_fulltext_index"],
+                "title": info["metadata"].get("Title", p.stem.replace("_", " ").title()),
+                "date": info["metadata"].get("Date", ""),
+                "language": info["metadata"].get("Language", "eng"),
+            })
+        except Exception:
+            packs.append({
+                "filename": p.name,
+                "filesize_kb": round(p.stat().st_size / 1024, 1),
+                "article_count": -1,
+                "has_fulltext_index": False,
+                "title": p.name,
+                "date": "",
+                "language": "eng",
+            })
+
+    return {"packs": sorted(packs, key=lambda x: x["filename"])}
+
+
+@app.get("/api/download-zim/{filename}")
+def download_zim(filename: str):
+    """Download compiled .zim archive for offline reading in Kiwix Desktop."""
+    packs_dir = ROOT_DIR / "packs"
+    safe_path = (packs_dir / filename).resolve()
+
+    # Prevent directory traversal
+    if not str(safe_path).startswith(str(packs_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not safe_path.exists() or not safe_path.is_file():
+        raise HTTPException(status_code=404, detail="ZIM archive not found")
+
+    return FileResponse(
+        path=safe_path,
+        media_type="application/octet-stream",
+        filename=filename,
+    )
+
+
+@app.get("/api/inspect-zim/{filename}")
+def inspect_zim_endpoint(filename: str):
+    """Inspect contents and openZIM metadata of a specific .zim archive."""
+    packs_dir = ROOT_DIR / "packs"
+    safe_path = (packs_dir / filename).resolve()
+
+    if not str(safe_path).startswith(str(packs_dir.resolve())) or not safe_path.exists():
+        raise HTTPException(status_code=404, detail="ZIM archive not found")
+
+    try:
+        scraper = WelfareZimScraper()
+        return scraper.inspect_zim(safe_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
