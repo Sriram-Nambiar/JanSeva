@@ -21,6 +21,16 @@ export default function App() {
   const [schemeQuery, setSchemeQuery] = useState('');
   const [schemeResults, setSchemeResults] = useState([]);
 
+  // openZIM Scraper state
+  const [scrapeUrl, setScrapeUrl] = useState('https://myscheme.gov.in');
+  const [scrapeTitle, setScrapeTitle] = useState('JanSeva Welfare Directory');
+  const [scrapeLanguage, setScrapeLanguage] = useState('eng');
+  const [scrapeMaxPages, setScrapeMaxPages] = useState(15);
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeStatusMsg, setScrapeStatusMsg] = useState(null);
+  const [scrapedPacksList, setScrapedPacksList] = useState([]);
+  const [inspectingPackData, setInspectingPackData] = useState(null);
+
   // Telemetry state
   const [kioskMetrics, setKioskMetrics] = useState({
     preflights: 142,
@@ -53,6 +63,7 @@ export default function App() {
 
     fetchRejection('PFMS_04');
     fetchSchemes('');
+    fetchScrapedPacks();
 
     fetch('/api/telemetry')
       .then(res => res.json())
@@ -66,6 +77,62 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+
+  const fetchScrapedPacks = async () => {
+    try {
+      const res = await fetch('/api/scraped-packs');
+      if (res.ok) {
+        const data = await res.json();
+        setScrapedPacksList(data.packs || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTriggerScrape = async (isCurated = false) => {
+    setIsScraping(true);
+    setScrapeStatusMsg(isCurated ? 'COMPILING CURATED WELFARE PACK (0MS)...' : `CRAWLING ${scrapeUrl}...`);
+    try {
+      const payload = {
+        url: scrapeUrl,
+        output_name: isCurated ? 'welfare_curated.zim' : 'welfare_scraped.zim',
+        title: scrapeTitle,
+        language: scrapeLanguage,
+        max_pages: parseInt(scrapeMaxPages) || 15,
+        curated_pack: isCurated,
+      };
+      const res = await fetch('/api/scrape-to-zim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setScrapeStatusMsg(`SUCCESS: COMPILED ${data.filename} (${data.filesize_kb} KB, ${data.article_count} SCHEMES)`);
+        await fetchScrapedPacks();
+      } else {
+        const err = await res.json();
+        setScrapeStatusMsg(`ERROR: ${err.detail || 'Scraping failed'}`);
+      }
+    } catch (e) {
+      setScrapeStatusMsg(`NETWORK ERROR: ${e.message}`);
+    } finally {
+      setIsScraping(false);
+    }
+  };
+
+  const handleInspectPack = async (filename) => {
+    try {
+      const res = await fetch(`/api/inspect-zim/${encodeURIComponent(filename)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setInspectingPackData(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const executePreflight = async (imgA, imgB, language = activeLang) => {
     setIsProcessing(true);
@@ -167,6 +234,7 @@ export default function App() {
           <a href="#proof" className="hidden md:inline hover:text-[#0D0D0F] transition-colors">DRIVE</a>
           <a href="#diagram" className="hidden sm:inline hover:text-[#0D0D0F] transition-colors">PIPELINE</a>
           <a href="#terminal" className="hover:text-[#0D0D0F] transition-colors">FINISH</a>
+          <a href="#scraper" className="hidden sm:inline hover:text-[#0D0D0F] transition-colors">ZIM SCRAPER</a>
           <a href="#table" className="hidden lg:inline hover:text-[#0D0D0F] transition-colors">NUMBERS</a>
 
           <a
@@ -707,6 +775,305 @@ export default function App() {
             )}
 
           </div>
+
+        </div>
+      </section>
+
+
+      {/* =========================================================================
+          SECTION 5: OPENZIM WELFARE ARCHIVER & KIWIX DESKTOP COMPILER
+          ========================================================================= */}
+      <section id="scraper" className="w-full bg-[#EAEAE8] py-24 px-8 sm:px-14 border-b border-[#0D0D0F]/10">
+        <div className="max-w-7xl mx-auto">
+          
+          <div className="w-full flex justify-between items-center text-[11px] tracking-[0.16em] uppercase text-[#6E6F76] border-b border-[#0D0D0F]/10 pb-4 mb-10">
+            <span>SECTION 05 // OPENZIM PIPELINE</span>
+            <span className="text-[#2F5BFF] font-semibold">KIWIX DESKTOP COMPLIANT (LIBZIM 3.13)</span>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 mb-12">
+            
+            {/* Left Column: Crawler Controls & Execution Bay */}
+            <div className="lg:col-span-6 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] font-semibold tracking-widest uppercase text-[#2F5BFF] block mb-2">
+                  [OFFLINE_STORAGE_PIPELINE]
+                </span>
+                <h2 className="font-display font-extrabold text-3xl sm:text-4xl uppercase tracking-tight text-[#0D0D0F] mb-4">
+                  CRAWL. COMPILE.<br />
+                  <span className="text-[#2F5BFF]">BROWSE OFFLINE.</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-[#43444A] leading-relaxed font-sans mb-6">
+                  Scrape Indian central and state welfare portals into self-contained openZIM archives. Equipped with full-text search indexing, offline stylesheets, and statutory verification guides—ready to mount in Kiwix Desktop.
+                </p>
+
+                {/* Preset Portals Bar */}
+                <div className="mb-6">
+                  <span className="text-[10px] tracking-widest uppercase text-[#6E6F76] block mb-2">
+                    PORTAL SEED PRESETS:
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { label: "MYSCHEME.GOV.IN", url: "https://myscheme.gov.in", title: "MyScheme National Portal" },
+                      { label: "PM-KISAN", url: "https://pmkisan.gov.in", title: "PM-KISAN Samman Nidhi Portal" },
+                      { label: "SEVA SINDHU (KA)", url: "https://sevasindhu.karnataka.gov.in", title: "Karnataka Seva Sindhu Welfare" },
+                      { label: "DBT BHARAT", url: "https://dbtbharat.gov.in", title: "Central DBT Bharat Registry" },
+                    ].map(preset => (
+                      <button
+                        key={preset.label}
+                        onClick={() => {
+                          setScrapeUrl(preset.url);
+                          setScrapeTitle(preset.title);
+                        }}
+                        className={`px-3 py-1 text-[10px] font-mono uppercase tracking-wider border transition-all ${
+                          scrapeUrl === preset.url
+                            ? "bg-[#0D0D0F] text-white border-[#0D0D0F]"
+                            : "bg-[#E2E2DF] text-[#43444A] border-[#0D0D0F]/15 hover:border-[#0D0D0F]"
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* URL Input Form */}
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <label className="text-[10px] uppercase text-[#6E6F76] block mb-1">
+                      SEED PORTAL URL:
+                    </label>
+                    <input
+                      type="text"
+                      value={scrapeUrl}
+                      onChange={(e) => setScrapeUrl(e.target.value)}
+                      placeholder="https://myscheme.gov.in"
+                      className="w-full bg-[#E2E2DF] border border-[#0D0D0F]/20 px-4 py-2.5 text-xs font-mono text-[#0D0D0F] outline-none focus:border-[#2F5BFF]"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] uppercase text-[#6E6F76] block mb-1">
+                        ARCHIVE TITLE:
+                      </label>
+                      <input
+                        type="text"
+                        value={scrapeTitle}
+                        onChange={(e) => setScrapeTitle(e.target.value)}
+                        placeholder="JanSeva Welfare Directory"
+                        className="w-full bg-[#E2E2DF] border border-[#0D0D0F]/20 px-3 py-2 text-xs font-mono text-[#0D0D0F] outline-none focus:border-[#2F5BFF]"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] uppercase text-[#6E6F76] block mb-1">
+                          INDEX LANG:
+                        </label>
+                        <select
+                          value={scrapeLanguage}
+                          onChange={(e) => setScrapeLanguage(e.target.value)}
+                          className="w-full bg-[#E2E2DF] border border-[#0D0D0F]/20 px-2 py-2 text-xs font-mono text-[#0D0D0F] outline-none focus:border-[#2F5BFF]"
+                        >
+                          <option value="eng">ENG (English)</option>
+                          <option value="hin">HIN (Hindi)</option>
+                          <option value="kan">KAN (Kannada)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] uppercase text-[#6E6F76] block mb-1">
+                          MAX PAGES:
+                        </label>
+                        <select
+                          value={scrapeMaxPages}
+                          onChange={(e) => setScrapeMaxPages(e.target.value)}
+                          className="w-full bg-[#E2E2DF] border border-[#0D0D0F]/20 px-2 py-2 text-xs font-mono text-[#0D0D0F] outline-none focus:border-[#2F5BFF]"
+                        >
+                          <option value="10">10 Pages</option>
+                          <option value="15">15 Pages</option>
+                          <option value="25">25 Pages</option>
+                          <option value="50">50 Pages</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Scraper Action Triggers */}
+                <div className="flex flex-wrap items-center gap-3 mb-6">
+                  <button
+                    onClick={() => handleTriggerScrape(false)}
+                    disabled={isProcessing || isScraping}
+                    className="px-6 py-2.5 rounded-full bg-[#0D0D0F] text-white text-xs font-medium tracking-[0.14em] uppercase hover:bg-black transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
+                  >
+                    <span>{isScraping ? "CRAWLING & BUILDING..." : "START LIVE CRAWL & COMPILE"}</span>
+                    <span className="text-[#2F5BFF] font-bold">●</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleTriggerScrape(true)}
+                    disabled={isProcessing || isScraping}
+                    className="px-5 py-2.5 rounded-full bg-[#DFDFDC] text-[#0D0D0F] text-xs font-medium tracking-[0.14em] uppercase hover:bg-[#D5D5D1] transition-all border border-[#0D0D0F]/10 disabled:opacity-50"
+                  >
+                    COMPILE CURATED PACK (0MS)
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Crawler Status Console */}
+              <div className="bg-[#0D0D0F] text-white p-4 border border-[#0D0D0F] text-xs font-mono">
+                <div className="flex justify-between items-center text-[10px] uppercase text-white/50 border-b border-white/10 pb-2 mb-2">
+                  <span>CRAWLER MONITOR LOG</span>
+                  <span className={isScraping ? "text-[#7C97FF] animate-pulse" : "text-emerald-400"}>
+                    {isScraping ? "ACTIVE SCRAPE IN PROGRESS" : "STANDBY IDLE"}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[#A5A5AA] min-h-[38px] flex items-center">
+                  {scrapeStatusMsg || "Ready to crawl portal. Select preset above or input custom government welfare URL."}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Local .ZIM Store & Kiwix Desktop Integration */}
+            <div className="lg:col-span-6 flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-center text-[10px] tracking-widest uppercase text-[#6E6F76] border-b border-[#0D0D0F]/10 pb-2 mb-4">
+                  <span>COMPILED .ZIM ARCHIVES IN STORAGE</span>
+                  <span>COUNT: {scrapedPacksList.length}</span>
+                </div>
+
+                <div className="space-y-3 mb-6 max-h-[380px] overflow-y-auto pr-1">
+                  {scrapedPacksList.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-[#6E6F76] border border-dashed border-[#0D0D0F]/20">
+                      No .zim archives compiled yet. Click "Compile Curated Pack" to generate one.
+                    </div>
+                  ) : (
+                    scrapedPacksList.map((pack) => (
+                      <div
+                        key={pack.filename}
+                        className="p-4 bg-[#E2E2DF] border border-[#0D0D0F]/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-[#0D0D0F]/30 transition-all"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-display font-bold text-sm text-[#0D0D0F]">
+                              {pack.filename}
+                            </span>
+                            {pack.has_fulltext_index && (
+                              <span className="text-[9px] bg-[#2F5BFF]/10 text-[#2F5BFF] px-1.5 py-0.5 rounded font-mono font-semibold uppercase">
+                                INDEXED
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-[#6E6F76]">
+                            <span>{pack.title}</span> · <span>{pack.article_count} schemes</span> · <span>{pack.filesize_kb} KB</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleInspectPack(pack.filename)}
+                            className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider bg-white border border-[#0D0D0F]/15 hover:border-[#0D0D0F] transition-all"
+                          >
+                            INSPECT
+                          </button>
+                          <a
+                            href={`/api/download-zim/${encodeURIComponent(pack.filename)}`}
+                            download
+                            className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider bg-[#0D0D0F] text-white hover:bg-black transition-all flex items-center gap-1.5"
+                          >
+                            <span>DOWNLOAD</span>
+                            <span className="text-[#2F5BFF]">↓</span>
+                          </a>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Kiwix Desktop Integration Explainer */}
+              <div className="p-5 border border-[#0D0D0F]/15 bg-[#E2E2DF] text-xs">
+                <div className="text-[10px] font-semibold tracking-widest uppercase text-[#2F5BFF] mb-2 flex items-center gap-2">
+                  <span>KIWIX DESKTOP COMPATIBILITY NOTICE</span>
+                  <span className="text-[9px] bg-[#0D0D0F] text-white px-1.5 py-0.5 rounded font-mono">
+                    OPENZIM SPEC
+                  </span>
+                </div>
+                <p className="text-[#43444A] text-[11px] leading-relaxed mb-3">
+                  All compiled archives follow the standard openZIM format with Xapian full-text indexing, metadata tags, and offline CSS. They can be opened in <a href="https://github.com/Sriram-Nambiar/kiwix-desktop" target="_blank" rel="noreferrer" className="text-[#2F5BFF] font-semibold underline">Kiwix Desktop</a> or loaded directly into JanSeva’s offline 0ms query engine.
+                </p>
+                <div className="text-[10px] font-mono text-[#6E6F76] space-y-1">
+                  <div>1. Click <strong className="text-[#0D0D0F]">DOWNLOAD</strong> to save the .zim archive.</div>
+                  <div>2. Open Kiwix Desktop → <strong>File → Open File...</strong></div>
+                  <div>3. Search schemes, statutory rules & documents offline with 0 internet.</div>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* Inspect Modal / Overlay if open */}
+          {inspectingPackData && (
+            <div className="mt-8 p-6 bg-[#0D0D0F] text-white border border-white/10 font-mono text-xs">
+              <div className="flex justify-between items-center border-b border-white/15 pb-3 mb-4">
+                <span className="text-[11px] text-[#7C97FF] uppercase font-bold">
+                  LIBZIM ARCHIVE INSPECTION: {inspectingPackData.filename}
+                </span>
+                <button
+                  onClick={() => setInspectingPackData(null)}
+                  className="px-2 py-1 text-[10px] uppercase border border-white/20 hover:border-white transition-all text-white/70 hover:text-white"
+                >
+                  [CLOSE X]
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 text-[11px]">
+                <div className="bg-white/5 p-3 border border-white/10">
+                  <span className="text-[10px] text-white/50 block">FILE SIZE:</span>
+                  <span className="font-bold">{inspectingPackData.filesize_kb} KB</span>
+                </div>
+                <div className="bg-white/5 p-3 border border-white/10">
+                  <span className="text-[10px] text-white/50 block">TOTAL ENTRIES:</span>
+                  <span className="font-bold">{inspectingPackData.entry_count}</span>
+                </div>
+                <div className="bg-white/5 p-3 border border-white/10">
+                  <span className="text-[10px] text-white/50 block">ARTICLES:</span>
+                  <span className="font-bold">{inspectingPackData.article_count}</span>
+                </div>
+                <div className="bg-white/5 p-3 border border-white/10">
+                  <span className="text-[10px] text-white/50 block">MAIN ENTRY:</span>
+                  <span className="font-bold text-[#7C97FF]">{inspectingPackData.main_path || "index.html"}</span>
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <span className="text-[10px] text-white/50 block mb-1">OPENZIM METADATA TAGS:</span>
+                <div className="bg-white/5 p-3 border border-white/10 space-y-1 text-[10px]">
+                  {Object.entries(inspectingPackData.metadata || {}).map(([k, v]) => (
+                    <div key={k} className="flex justify-between border-b border-white/5 pb-1">
+                      <span className="text-white/70">{k}:</span>
+                      <span className="text-[#A5A5AA] text-right truncate max-w-[400px]">{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] text-white/50 block mb-1">SAMPLE INDEXED ARTICLES:</span>
+                <div className="bg-white/5 p-3 border border-white/10 max-h-36 overflow-y-auto space-y-1 text-[10px]">
+                  {(inspectingPackData.sample_entries || []).map((e, idx) => (
+                    <div key={idx} className="flex justify-between text-[#A5A5AA]">
+                      <span>{e.path}</span>
+                      <span className="text-white/80">{e.title}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
       </section>
