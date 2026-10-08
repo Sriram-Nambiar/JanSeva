@@ -17,6 +17,7 @@ import base64
 import binascii
 import io
 import pathlib
+import re
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Response
@@ -111,6 +112,20 @@ telemetry = KioskTelemetry()
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 DEMO_DIR = ROOT_DIR / "demo_assets"
+PACKS_DIR = ROOT_DIR / "packs"
+PACK_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+\.zim$")
+
+
+def resolve_safe_pack_path(filename: str) -> pathlib.Path:
+    """Resolve and validate a requested pack path inside PACKS_DIR."""
+    if not PACK_NAME_PATTERN.fullmatch(filename):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    for pack_path in PACKS_DIR.glob("*.zim"):
+        if pack_path.name == filename:
+            return pack_path.resolve()
+
+    raise HTTPException(status_code=404, detail="ZIM archive not found")
 
 
 # ---------------------------------------------------------------------------
@@ -832,13 +847,14 @@ class ScrapeRequest(BaseModel):
 @app.post("/api/scrape-to-zim")
 def trigger_scrape_to_zim(payload: ScrapeRequest):
     """Scrape welfare portal and compile directly to Kiwix openZIM archive."""
-    packs_dir = ROOT_DIR / "packs"
-    packs_dir.mkdir(parents=True, exist_ok=True)
+    PACKS_DIR.mkdir(parents=True, exist_ok=True)
 
     safe_name = (payload.output_name or "welfare_scraped.zim").strip()
     if not safe_name.endswith(".zim"):
         safe_name += ".zim"
-    out_file = packs_dir / safe_name
+    if not PACK_NAME_PATTERN.fullmatch(safe_name):
+        raise HTTPException(status_code=400, detail="Invalid output filename")
+    out_file = PACKS_DIR / safe_name
 
     scraper = WelfareZimScraper()
 
@@ -886,14 +902,13 @@ def trigger_scrape_to_zim(payload: ScrapeRequest):
 @app.get("/api/scraped-packs")
 def list_scraped_packs():
     """List all available .zim files in packs directory."""
-    packs_dir = ROOT_DIR / "packs"
-    if not packs_dir.exists():
+    if not PACKS_DIR.exists():
         return {"packs": []}
 
     packs = []
     scraper = WelfareZimScraper()
 
-    for p in packs_dir.glob("*.zim"):
+    for p in PACKS_DIR.glob("*.zim"):
         try:
             info = scraper.inspect_zim(p)
             packs.append({
@@ -922,15 +937,7 @@ def list_scraped_packs():
 @app.get("/api/download-zim/{filename}")
 def download_zim(filename: str):
     """Download compiled .zim archive for offline reading in Kiwix Desktop."""
-    packs_dir = ROOT_DIR / "packs"
-    safe_path = (packs_dir / filename).resolve()
-
-    # Prevent directory traversal
-    if not str(safe_path).startswith(str(packs_dir.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid file path")
-
-    if not safe_path.exists() or not safe_path.is_file():
-        raise HTTPException(status_code=404, detail="ZIM archive not found")
+    safe_path = resolve_safe_pack_path(filename)
 
     return FileResponse(
         path=safe_path,
@@ -942,12 +949,7 @@ def download_zim(filename: str):
 @app.get("/api/inspect-zim/{filename}")
 def inspect_zim_endpoint(filename: str):
     """Inspect contents and openZIM metadata of a specific .zim archive."""
-    packs_dir = ROOT_DIR / "packs"
-    safe_path = (packs_dir / filename).resolve()
-
-    if not str(safe_path).startswith(str(packs_dir.resolve())) or not safe_path.exists():
-        raise HTTPException(status_code=404, detail="ZIM archive not found")
-
+    safe_path = resolve_safe_pack_path(filename)
     try:
         scraper = WelfareZimScraper()
         return scraper.inspect_zim(safe_path)
@@ -959,14 +961,7 @@ def inspect_zim_endpoint(filename: str):
 @app.get("/api/zim-view/{filename}/{entry_path:path}")
 def view_zim_content(filename: str, entry_path: str = "index.html"):
     """Serve articles, stylesheets, vector icons, and pages directly from within the .zim archive using python-libzim."""
-    packs_dir = ROOT_DIR / "packs"
-    safe_path = (packs_dir / filename).resolve()
-
-    if not str(safe_path).startswith(str(packs_dir.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid path")
-    if not safe_path.exists() or not safe_path.is_file():
-        raise HTTPException(status_code=404, detail="ZIM archive not found")
-
+    safe_path = resolve_safe_pack_path(filename)
     try:
         archive = libzim.Archive(str(safe_path))
         target_path = entry_path.strip("/") if entry_path else "index.html"
