@@ -17,26 +17,18 @@ import base64
 import binascii
 import io
 import pathlib
-<<<<<<< HEAD
-from typing import Any, Dict, Optional
-
-from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
-from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, Field
-=======
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from PIL import Image
+from pydantic import BaseModel, Field
+from PIL import Image, UnidentifiedImageError
+from fastapi import status
 import libzim
 
 from scraper.models import ScraperConfig
 from scraper.welfare_scraper import WelfareZimScraper
->>>>>>> origin/main
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +789,6 @@ def get_telemetry() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/hotspot-qr")
-<<<<<<< HEAD
 def get_hotspot_qr() -> Dict[str, str]:
     """
     Generate a QR code pointing to the local JanSeva kiosk UI.
@@ -826,17 +817,6 @@ def get_hotspot_qr() -> Dict[str, str]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to generate hotspot QR code.",
         )
-=======
-def get_hotspot_qr():
-    """Generate QR code pointing to this kiosk server."""
-    ip = get_local_ip()
-    url = f"http://{ip}:3000"
-    qr_img = generate_hotspot_qr(url)
-    return {
-        "url": url,
-        "qr_data_uri": pil_to_base64_data_uri(qr_img, format="PNG"),
-    }
-
 
 class ScrapeRequest(BaseModel):
     url: str = "https://myscheme.gov.in"
@@ -1011,4 +991,3 @@ def view_zim_content(filename: str, entry_path: str = "index.html"):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
->>>>>>> origin/main
