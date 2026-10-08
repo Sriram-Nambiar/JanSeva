@@ -17,17 +17,14 @@ It cross-verifies physical identification documents, computes an **Application R
 
 ---
 
-## 🎯 Hackathon Challenges Addressed
+## ⚡ Key Highlights
 
-### 1. Best Use of Gemma 4
 - **Multimodal Document Inspection:** Uses Gemma 4 vision to ingest noisy camera crops of laminated physical IDs (Aadhaar, Ration Card, Bank Passbook) and printed administrative rejection notices.
 - **Empathetic Layman Translations:** Translates bureaucratic mismatch codes into plain English, Hindi, and Kannada.
 - **Hybrid Deployment:** Runs seamlessly across Google GenAI Cloud API, local Ollama edge weights (`localhost:11434`), and offline deterministic fallback rules.
-
-### 2. Best Open-Source AI Project
-- **Model Harness for Kiwix/openZIM:** Extends Kiwix by providing a native multimodal Python Model Harness on top of `python-libzim` to query offline `.zim` welfare archives at 0ms latency.
+- **Model Harness for Kiwix / openZIM:** Extends Kiwix by providing a native multimodal Python Model Harness on top of `python-libzim` to query offline `.zim` welfare archives at 0ms latency.
 - **Agent Skill Open Standard:** Repository ships with a fully compliant [SKILL.md](file:///c:/Users/Swathi/Desktop/janseva/SKILL.md) specification.
-- **100% Public Open-Source:** Released under the MIT License for the openZIM & MLH communities.
+- **100% Public Open-Source:** Released under the MIT License for the open-source community.
 
 ---
 
@@ -124,24 +121,13 @@ npm run dev -- --host 0.0.0.0 --port 3000
 
 ---
 
-## 🛡️ The "Why Local-First?" Defense for Judges
+## 🛡️ Why Local-First Architecture?
 
-> **Judge's Question:** *"India has 5G everywhere, and the government portal is online anyway. Why make the AI local/offline?"*
-> 
-> **Our Answer:**
-> 1. **DPDP Act (2023) Legal Mandate:** Uploading raw, unmasked 12-digit Aadhaar cards and bank passbooks to commercial cloud AI is illegal. JanSeva redacts and processes 100% in local device RAM.
-> 2. **Government Portal Server Congestion:** Portals crash during peak hours because millions of kiosks upload heavy 5MB image scans at once. JanSeva acts as an **"ESLint for Welfare"**—performing heavy visual validation on edge kiosks, then transmitting a tiny 1KB verified payload.
-> 3. **Eliminating the 15–20% Clerical Rejection Backlog:** Minor typos (e.g., `Ramesh Kumar` vs `Ramesh K`) delay welfare disbursements by weeks. JanSeva catches errors *before* submission.
-
----
-
-## 👥 Team
-- **Sriram S Nambiar:** Lead AI & Core Systems Architect
-- **Pavan Adiveppa Harali:** Desktop Interface & Local-Serve Engineer
-- **Vasanth S Tumarikoppa:** Knowledge Retrieval & ZIM Pipeline Engineer
-- **Raghavendra:** Preflight Logic & Scoring Engine Developer
+1. **DPDP Act (2023) Legal Mandate:** Uploading raw, unmasked 12-digit Aadhaar cards and bank passbooks to commercial cloud AI is prohibited under data protection guidelines. JanSeva redacts and processes 100% in local device RAM.
+2. **Government Portal Server Congestion:** Portals crash during peak hours because millions of kiosks upload heavy 5MB image scans simultaneously. JanSeva acts as an **"ESLint for Welfare"**—performing heavy visual validation on edge kiosks, then transmitting a tiny 1KB verified payload.
+3. **Eliminating the 15–20% Clerical Rejection Backlog:** Minor typos (e.g., `Ramesh Kumar` vs `Ramesh K`) delay welfare disbursements by weeks. JanSeva catches errors *before* submission.
 
 ---
 
 ## 📄 License
-MIT License. Open-source contribution to the openZIM & MLH community.
+MIT License. Open-source contribution to the openZIM ecosystem.

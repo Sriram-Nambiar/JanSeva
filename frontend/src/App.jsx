@@ -1129,7 +1129,7 @@ export default function App() {
               JANSEVA<span className="text-[#ffe17c] text-4xl leading-none">.</span>
             </div>
             <p className="font-inter font-normal text-xs text-white/60 max-w-sm leading-relaxed">
-              The client-side linter for Indian citizen welfare schemes. Built for Hacktoberfest Hack Day Bengaluru.
+              The client-side linter for Indian citizen welfare schemes. Zero cloud leakage, 100% on-device preflight verification.
             </p>
           </div>
 
@@ -1144,7 +1144,7 @@ export default function App() {
         </div>
 
         <div className="max-w-6xl mx-auto pt-8 flex flex-col sm:flex-row justify-between items-center gap-4 font-inter font-normal text-xs text-white/40">
-          <span>MIT LICENSE · TEAM: SRIRAM · PAVAN · VASANTH · RAGHAVENDRA</span>
+          <span>MIT LICENSE · OPEN SOURCE WELFARE PREFLIGHT COPILOT</span>
           <span>BENGALURU, KARNATAKA · LIBZIM 3.13 INTEGRATION</span>
         </div>
       </footer>
