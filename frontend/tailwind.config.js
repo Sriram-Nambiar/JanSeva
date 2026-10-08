@@ -7,41 +7,25 @@ export default {
   theme: {
     extend: {
       colors: {
-        ground: "#EFEFEE",
-        stage: "#E4E4E2",
-        ink: "#0D0D0F",
-        "ink-secondary": "#43444A",
-        muted: "#6E6F76",
-        accent: "#2F5BFF",
-        "accent-light": "#7C97FF",
+        charcoal: "#171e19",
+        "dark-gray": "#272727",
+        gold: "#ffe17c",
+        sage: "#b7c6c2",
       },
       fontFamily: {
-        display: ['"Archivo"', 'sans-serif'],
-        mono: ['"IBM Plex Mono"', 'monospace'],
+        anton: ['"Anton"', 'sans-serif'],
+        satoshi: ['"Satoshi"', '"Plus Jakarta Sans"', 'sans-serif'],
+        sans: ['"Satoshi"', '"Plus Jakarta Sans"', 'sans-serif'],
+        mono: ['"Space Mono"', 'monospace'],
       },
-      letterSpacing: {
-        tightest: '-0.055em',
-        tighter: '-0.04em',
-        widest: '0.16em',
-        wide: '0.14em',
+      backgroundImage: {
+        'grid-pattern': 'linear-gradient(to right, rgba(183, 198, 194, 0.25) 1px, transparent 1px), linear-gradient(to bottom, rgba(183, 198, 194, 0.25) 1px, transparent 1px)',
       },
-      lineHeight: {
-        display: '0.74',
-        tight: '0.88',
-      },
-      borderRadius: {
-        none: '0',
-        DEFAULT: '0',
-        sm: '0',
-        md: '0',
-        lg: '0',
-        xl: '0',
-        '2xl': '0',
-        '3xl': '0',
-        full: '9999px',
+      backgroundSize: {
+        'grid-pattern': '40px 40px',
       },
       transitionTimingFunction: {
-        snappy: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        'smooth-bounce': 'cubic-bezier(0.4, 0, 0.2, 1)',
       },
     },
   },
