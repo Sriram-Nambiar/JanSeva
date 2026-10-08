@@ -17,17 +17,14 @@ It cross-verifies physical identification documents, computes an **Application R
 
 ---
 
-## 🎯 Hackathon Challenges Addressed
+## ⚡ Key Highlights
 
-### 1. Best Use of Gemma 4
 - **Multimodal Document Inspection:** Uses Gemma 4 vision to ingest noisy camera crops of laminated physical IDs (Aadhaar, Ration Card, Bank Passbook) and printed administrative rejection notices.
 - **Empathetic Layman Translations:** Translates bureaucratic mismatch codes into plain English, Hindi, and Kannada.
 - **Hybrid Deployment:** Runs seamlessly across Google GenAI Cloud API, local Ollama edge weights (`localhost:11434`), and offline deterministic fallback rules.
-
-### 2. Best Open-Source AI Project
-- **Model Harness for Kiwix/openZIM:** Extends Kiwix by providing a native multimodal Python Model Harness on top of `python-libzim` to query offline `.zim` welfare archives at 0ms latency.
+- **Model Harness for Kiwix / openZIM:** Extends Kiwix by providing a native multimodal Python Model Harness on top of `python-libzim` to query offline `.zim` welfare archives at 0ms latency.
 - **Agent Skill Open Standard:** Repository ships with a fully compliant [SKILL.md](file:///c:/Users/Swathi/Desktop/janseva/SKILL.md) specification.
-- **100% Public Open-Source:** Released under the MIT License for the openZIM & MLH communities.
+- **100% Public Open-Source:** Released under the MIT License for the open-source community.
 
 ---
 
@@ -76,6 +73,13 @@ janseva/
 
 ---
 
+### Module 5: openZIM Welfare Portal Scraper & Kiwix Desktop Compiler
+- **openZIM Standard Compliant:** Crawls live government portals (MyScheme `myscheme.gov.in`, PM-KISAN, Seva Sindhu, Central DBT Bharat) and packages them into standard `.zim` archives with full-text Xapian indexing and offline CSS.
+- **Direct Kiwix Desktop Integration:** Compatible with [Kiwix Desktop](https://github.com/Sriram-Nambiar/kiwix-desktop) and [openZIM](https://github.com/openzim). Archives can be opened directly via `File -> Open File...` in Kiwix Desktop for 100% offline, searchable welfare access.
+- **Statutory Link Normalization:** Inlines offline typography, converts remote URLs to local ZIM links, and embeds statutory justification guides (Section 7 of Aadhaar Act, APBS DBT mandates).
+
+---
+
 ## 🚀 Quickstart
 
 ### 1. Install Dependencies
@@ -83,46 +87,47 @@ janseva/
 pip install -r requirements.txt
 ```
 
-### 2. Build Offline `.zim` Packs (Optional / Pre-compiled)
+### 2. Run openZIM Welfare Scraper CLI
 ```bash
-python packs/build_packs.py
+# Live crawl from MyScheme portal to Kiwix .zim archive:
+python scrape_welfare_to_zim.py --url https://myscheme.gov.in --output packs/myscheme_portal.zim --max-pages 25
+
+# Or compile comprehensive curated welfare pack immediately (0ms network delay):
+python scrape_welfare_to_zim.py --curated-pack --output packs/welfare_curated.zim
+
+# Inspect any .zim archive metadata and entries:
+python scrape_welfare_to_zim.py --inspect packs/welfare_curated.zim
 ```
 
-### 3. Generate Synthetic Demo Assets
-```bash
-python demo_assets/generate_demo_assets.py
-```
+### 3. Open in Kiwix Desktop
+1. Download or launch [Kiwix Desktop](https://github.com/Sriram-Nambiar/kiwix-desktop).
+2. Click **File → Open File...** and select any compiled `.zim` file (e.g. `packs/welfare_curated.zim`).
+3. Search and browse Indian central & state welfare schemes completely offline.
 
-### 4. Run Pytest Suite
+### 4. Run Pytest Suite (35 Unit Tests)
 ```bash
 python -m pytest -v
 ```
 
-### 5. Launch JanSeva Kiosk Application
+### 5. Launch JanSeva Full Stack
 ```bash
-streamlit run app.py
+# Terminal 1: Backend API Server
+python -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 2: React Frontend UI (Vite)
+cd frontend
+npm run dev -- --host 0.0.0.0 --port 3000
 ```
 
 ---
 
-## 🛡️ The "Why Local-First?" Defense for Judges
+## 🛡️ Why Local-First Architecture?
 
-> **Judge's Question:** *"India has 5G everywhere, and the government portal is online anyway. Why make the AI local/offline?"*
-> 
-> **Our Answer:**
-> 1. **DPDP Act (2023) Legal Mandate:** Uploading raw, unmasked 12-digit Aadhaar cards and bank passbooks to commercial cloud AI is illegal. JanSeva redacts and processes 100% in local device RAM.
-> 2. **Government Portal Server Congestion:** Portals crash during peak hours because millions of kiosks upload heavy 5MB image scans at once. JanSeva acts as an **"ESLint for Welfare"**—performing heavy visual validation on edge kiosks, then transmitting a tiny 1KB verified payload.
-> 3. **Eliminating the 15–20% Clerical Rejection Backlog:** Minor typos (e.g., `Ramesh Kumar` vs `Ramesh K`) delay welfare disbursements by weeks. JanSeva catches errors *before* submission.
-
----
-
-## 👥 Team
-- **Sriram S Nambiar:** Lead AI & Core Systems Architect
-- **Pavan Adiveppa Harali:** Desktop Interface & Local-Serve Engineer
-- **Vasanth S Tumarikoppa:** Knowledge Retrieval & ZIM Pipeline Engineer
-- **Raghavendra:** Preflight Logic & Scoring Engine Developer
+1. **DPDP Act (2023) Legal Mandate:** Uploading raw, unmasked 12-digit Aadhaar cards and bank passbooks to commercial cloud AI is prohibited under data protection guidelines. JanSeva redacts and processes 100% in local device RAM.
+2. **Government Portal Server Congestion:** Portals crash during peak hours because millions of kiosks upload heavy 5MB image scans simultaneously. JanSeva acts as an **"ESLint for Welfare"**—performing heavy visual validation on edge kiosks, then transmitting a tiny 1KB verified payload.
+3. **Eliminating the 15–20% Clerical Rejection Backlog:** Minor typos (e.g., `Ramesh Kumar` vs `Ramesh K`) delay welfare disbursements by weeks. JanSeva catches errors *before* submission.
 
 ---
 
 ## 📄 License
-MIT License. Open-source contribution to the openZIM & MLH community.
+MIT License. Open-source contribution to the openZIM ecosystem.

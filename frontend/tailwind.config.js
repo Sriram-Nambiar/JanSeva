@@ -7,49 +7,25 @@ export default {
   theme: {
     extend: {
       colors: {
-        cream: "#FDFCF8",
-        sage: "#E8EFE8",
-        lavender: "#EFEDF4",
-        coral: "#FFB7B2",
-        "soft-black": "#292524",
-        "soft-muted": "#78716C",
-        "blob-peach": "#FFE4E1",
-        "blob-lavender": "#E6E6FA",
+        charcoal: "#171e19",
+        "dark-gray": "#272727",
+        gold: "#ffe17c",
+        sage: "#b7c6c2",
       },
       fontFamily: {
-        outfit: ['"Outfit"', 'sans-serif'],
-        reenie: ['"Reenie Beanie"', 'cursive'],
+        anton: ['"Anton"', 'sans-serif'],
+        inter: ['"Inter"', 'sans-serif'],
+        sans: ['"Inter"', 'sans-serif'],
+        mono: ['"Inter"', 'monospace'],
       },
-      borderRadius: {
-        '2xl': '1.5rem',
-        '3xl': '2rem',
-        '4xl': '2.5rem',
-        '5xl': '3rem',
-        '6xl': '4rem',
+      backgroundImage: {
+        'grid-pattern': 'linear-gradient(to right, rgba(183, 198, 194, 0.25) 1px, transparent 1px), linear-gradient(to bottom, rgba(183, 198, 194, 0.25) 1px, transparent 1px)',
       },
-      boxShadow: {
-        'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
-        'soft-lg': '0 10px 30px -3px rgba(0, 0, 0, 0.06)',
-        'coral-glow': '0 8px 28px -4px rgba(255, 183, 178, 0.45)',
+      backgroundSize: {
+        'grid-pattern': '40px 40px',
       },
-      animation: {
-        'float-slow': 'float 6s ease-in-out infinite',
-        'float-reverse': 'float-rev 7s ease-in-out infinite',
-        'breathe': 'breathe 4s ease-in-out infinite',
-      },
-      keyframes: {
-        float: {
-          '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(-12px)' },
-        },
-        'float-rev': {
-          '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(12px)' },
-        },
-        breathe: {
-          '0%, 100%': { transform: 'scale(1)', boxShadow: '0 0 0 0 rgba(255, 183, 178, 0.4)' },
-          '50%': { transform: 'scale(1.06)', boxShadow: '0 0 24px 8px rgba(255, 183, 178, 0.35)' },
-        },
+      transitionTimingFunction: {
+        'smooth-bounce': 'cubic-bezier(0.4, 0, 0.2, 1)',
       },
     },
   },
