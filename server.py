@@ -1,108 +1,523 @@
-"""JanSeva 2.0 FastAPI Backend Server.
+"""
+JanSeva 2.0 FastAPI Backend Server.
 
 Bridges the React frontend to the JanSeva core engines:
+
 - Gemma 4 Multimodal Harness
 - DPDP Act 2023 In-RAM PII Redactor & Verhoeff Validator
 - Preflight Verification & Application Readiness Scoring Engine
 - openZIM / Kiwix python-libzim Knowledge Retrieval
-- 'Kyun Reject Hua?' Rejection Decoder
+- "Kyun Reject Hua?" Rejection Decoder
+
+Core principle:
+Rules decide. AI explains. Humans verify.
 """
 
 import base64
+import binascii
 import io
-import os
 import pathlib
+import re
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from PIL import Image
+from pydantic import BaseModel, Field
+from PIL import Image, UnidentifiedImageError
+from fastapi import status
 import libzim
 
 from scraper.models import ScraperConfig
 from scraper.welfare_scraper import WelfareZimScraper
 
-from core.gemma_harness import GemmaHarness
-from core.privacy import (
-    extract_and_mask_id,
-    mask_aadhaar_text,
-    redact_aadhaar_image,
-    sanitize_extracted_payload,
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+
+load_dotenv()
+
+
+# ---------------------------------------------------------------------------
+# JanSeva core imports
+# ---------------------------------------------------------------------------
+
+from core.gemma_harness import (
+    GemmaHarness,
+    LMStudioAPIError,
+    LMStudioConnectionError,
+    LMStudioError,
+    ModelNotConfiguredError,
+    is_mock_mode,
 )
+
 from core.rejection_decoder import RejectionDecoder
+from core.serve_mode import (
+    KioskTelemetry,
+    generate_hotspot_qr,
+    get_local_ip,
+)
 from core.scheme_finder import SchemeFinder
-from core.serve_mode import KioskTelemetry, generate_hotspot_qr, get_local_ip
-from core.verifier import DiscrepancySeverity, evaluate_readiness
+from core.verifier import evaluate_readiness
 from core.zim_engine import WelfareZimEngine
+from core.privacy import redact_aadhaar_image
 
-app = FastAPI(title="JanSeva API", version="2.0.0")
 
-# Enable CORS for local Vite development
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="JanSeva API",
+    version="2.0.0",
+    description="Offline-first welfare application verification backend.",
+)
+
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+#
+# Do NOT use "*" together with allow_credentials=True.
+# React development server normally runs on port 3000.
+#
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+# ---------------------------------------------------------------------------
 # Global engine instances
+# ---------------------------------------------------------------------------
+
 zim_engine = WelfareZimEngine()
 scheme_finder = SchemeFinder(zim_engine)
 rejection_decoder = RejectionDecoder(zim_engine)
 gemma_harness = GemmaHarness()
 telemetry = KioskTelemetry()
 
-ROOT_DIR = pathlib.Path(__file__).parent
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+ROOT_DIR = pathlib.Path(__file__).resolve().parent
 DEMO_DIR = ROOT_DIR / "demo_assets"
+PACKS_DIR = ROOT_DIR / "packs"
+PACK_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+\.zim$")
 
 
-def pil_to_base64_data_uri(img: Image.Image, format="JPEG") -> str:
-    """Convert PIL image to base64 data URI."""
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format=format, quality=85)
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/{format.lower()};base64,{b64}"
+def resolve_safe_pack_path(filename: str) -> pathlib.Path:
+    """Resolve and validate a requested pack path inside PACKS_DIR."""
+    if not PACK_NAME_PATTERN.fullmatch(filename):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    for pack_path in PACKS_DIR.glob("*.zim"):
+        if pack_path.name == filename:
+            return pack_path.resolve()
+
+    raise HTTPException(status_code=404, detail="ZIM archive not found")
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request models
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    """Request body for AI chat."""
+
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        description="Prompt string to analyze or send to Gemma AI.",
+    )
+
+
+class RejectionRequest(BaseModel):
+    """Request body for rejection decoding."""
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        description="Government rejection code, SMS, or rejection message.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+
+def pil_to_base64_data_uri(
+    img: Image.Image,
+    image_format: str = "JPEG",
+) -> str:
+    """
+    Convert a PIL image to a base64 data URI.
+
+    PNG is useful for redacted/demo documents.
+    JPEG is used by default for compact responses.
+    """
+
+    if not isinstance(img, Image.Image):
+        raise ValueError("Expected a PIL Image.")
+
+    image_format = image_format.upper()
+
+    if image_format not in {"JPEG", "PNG", "WEBP"}:
+        raise ValueError(
+            f"Unsupported image format: {image_format}"
+        )
+
+    buffer = io.BytesIO()
+
+    converted = img.convert("RGB")
+
+    save_kwargs = {}
+
+    if image_format == "JPEG":
+        save_kwargs["quality"] = 85
+        mime_type = "image/jpeg"
+    elif image_format == "PNG":
+        mime_type = "image/png"
+    else:
+        save_kwargs["quality"] = 85
+        mime_type = "image/webp"
+
+    converted.save(
+        buffer,
+        format=image_format,
+        **save_kwargs,
+    )
+
+    encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def read_image_from_upload(upload_file: UploadFile) -> Image.Image:
-    """Read PIL image from uploaded file buffer."""
-    contents = upload_file.file.read()
-    return Image.open(io.BytesIO(contents))
+    """
+    Read and validate an uploaded image.
+
+    The image is processed in memory and is not persisted to disk.
+    """
+
+    try:
+        contents = upload_file.file.read()
+
+        if not contents:
+            raise ValueError("Uploaded image is empty.")
+
+        image = Image.open(io.BytesIO(contents))
+
+        # Force PIL to actually decode the image while it is in memory.
+        image.load()
+
+        return image.convert("RGB")
+
+    except UnidentifiedImageError as exc:
+        raise ValueError("Uploaded file is not a valid image.") from exc
+
+    except OSError as exc:
+        raise ValueError("Unable to read the uploaded image.") from exc
 
 
-@app.get("/api/health")
-def health_check():
+def image_from_base64(data: str) -> Image.Image:
+    """
+    Decode an image from a base64 string or data URI.
+
+    Example:
+        data:image/png;base64,iVBOR...
+    """
+
+    if not data or not data.strip():
+        raise ValueError("Base64 image data is empty.")
+
+    try:
+        clean_data = data.strip()
+
+        # Support both:
+        # data:image/png;base64,...
+        # and raw base64 strings.
+        if "," in clean_data:
+            clean_data = clean_data.split(",", 1)[1]
+
+        # Remove accidental whitespace/newlines.
+        clean_data = "".join(clean_data.split())
+
+        raw_bytes = base64.b64decode(
+            clean_data,
+            validate=True,
+        )
+
+        if not raw_bytes:
+            raise ValueError("Decoded image is empty.")
+
+        image = Image.open(io.BytesIO(raw_bytes))
+        image.load()
+
+        return image.convert("RGB")
+
+    except (binascii.Error, ValueError, UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Invalid base64 image data.") from exc
+
+
+def load_demo_image(filename: str) -> Image.Image:
+    """
+    Load a demo image from demo_assets.
+
+    Raises FileNotFoundError if the demo asset does not exist.
+    """
+
+    path = DEMO_DIR / filename
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Demo asset not found: {filename}"
+        )
+
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Demo asset is not a file: {filename}"
+        )
+
+    try:
+        with Image.open(path) as image:
+            image.load()
+            return image.convert("RGB")
+
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError(
+            f"Demo asset is not a valid image: {filename}"
+        ) from exc
+
+
+def normalize_language(language: str) -> str:
+    """Normalize supported UI language codes."""
+
+    language = (language or "en").strip().lower()
+
+    allowed_languages = {"en", "hi", "kn"}
+
+    if language not in allowed_languages:
+        return "en"
+
+    return language
+
+
+# ---------------------------------------------------------------------------
+# Root endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/")
+def read_root() -> Dict[str, str]:
+    """Basic API information."""
+
     return {
-        "status": "online",
-        "app": "JanSeva 2.0",
-        "zim_mounted": zim_engine.is_zim_active,
-        "ollama_online": gemma_harness.is_ollama_online(),
-        "local_ip": get_local_ip(),
+        "application": "JanSeva",
+        "version": "2.0",
+        "status": "running",
     }
 
 
+# ---------------------------------------------------------------------------
+# Health endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/health")
+@app.get("/api/health")
+def health_check() -> Dict[str, Any]:
+    """
+    Return backend/provider health information.
+
+    Provider checks are intentionally non-fatal.
+    JanSeva backend can still run in mock/offline mode.
+    """
+
+    try:
+        lm_studio_online = gemma_harness.is_lm_studio_online()
+    except Exception:
+        lm_studio_online = False
+
+    try:
+        ollama_online = gemma_harness.is_ollama_online()
+    except Exception:
+        ollama_online = False
+
+    try:
+        zim_active = bool(zim_engine.is_zim_active)
+    except Exception:
+        zim_active = False
+
+    try:
+        local_ip = get_local_ip()
+    except Exception:
+        local_ip = "127.0.0.1"
+
+    return {
+        "status": "online",
+        "application": "JanSeva",
+        "version": "2.0",
+        "mock_ai": is_mock_mode(),
+        "lm_studio_online": lm_studio_online,
+        "ollama_online": ollama_online,
+        "zim_mounted": zim_active,
+        "local_ip": local_ip,
+    }
+
+
+# ---------------------------------------------------------------------------
+# LM Studio models
+# ---------------------------------------------------------------------------
+
+@app.get("/api/models")
+def get_models() -> Dict[str, Any]:
+    """Return available models from LM Studio."""
+
+    try:
+        models = gemma_harness.get_available_models()
+
+        return {
+            "models": models,
+            "count": len(models),
+        }
+
+    except LMStudioConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    except LMStudioError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    except Exception:
+        # Do not expose internal implementation details.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to fetch available models.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Chat
+# ---------------------------------------------------------------------------
+
+@app.post("/api/chat")
+def chat(payload: ChatRequest) -> Dict[str, str]:
+    """
+    Chat endpoint supporting:
+
+    - Mock mode
+    - LM Studio local Gemma
+    """
+
+    prompt = payload.prompt.strip()
+
+    if not prompt:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Prompt must not be empty.",
+        )
+
+    # Safe offline development mode.
+    if is_mock_mode():
+        return {
+            "response": (
+                "Mock JanSeva AI response: "
+                "document requires human verification."
+            ),
+            "provider": "mock",
+        }
+
+    try:
+        response_text = gemma_harness.send_chat_request(prompt)
+
+        return {
+            "response": response_text,
+            "provider": "lm-studio",
+        }
+
+    except ModelNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    except LMStudioConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    except LMStudioAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AI provider request failed.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Demo assets
+# ---------------------------------------------------------------------------
+
 @app.get("/api/demo-assets")
-def get_demo_assets():
-    """Return base64 data URIs of pre-generated sample documents for 1-click test."""
-    p_aadhaar = DEMO_DIR / "sample_aadhaar.png"
-    p_ration = DEMO_DIR / "sample_ration.png"
-    p_passbook = DEMO_DIR / "sample_passbook.png"
-    p_slip = DEMO_DIR / "sample_rejection_slip.png"
+def get_demo_assets() -> Dict[str, str]:
+    """
+    Return base64 data URIs of pre-generated sample documents.
 
-    res = {}
-    if p_aadhaar.exists():
-        res["aadhaar"] = pil_to_base64_data_uri(Image.open(p_aadhaar), format="PNG")
-    if p_ration.exists():
-        res["ration"] = pil_to_base64_data_uri(Image.open(p_ration), format="PNG")
-    if p_passbook.exists():
-        res["passbook"] = pil_to_base64_data_uri(Image.open(p_passbook), format="PNG")
-    if p_slip.exists():
-        res["rejection_slip"] = pil_to_base64_data_uri(Image.open(p_slip), format="PNG")
+    Missing demo assets are simply omitted from the response.
+    """
 
-    return res
+    demo_files = {
+        "aadhaar": "sample_aadhaar.png",
+        "ration": "sample_ration.png",
+        "passbook": "sample_passbook.png",
+        "rejection_slip": "sample_rejection_slip.png",
+    }
 
+    result: Dict[str, str] = {}
+
+    for key, filename in demo_files.items():
+        path = DEMO_DIR / filename
+
+        if not path.exists() or not path.is_file():
+            continue
+
+        try:
+            with Image.open(path) as image:
+                image.load()
+                result[key] = pil_to_base64_data_uri(
+                    image,
+                    image_format="PNG",
+                )
+        except (UnidentifiedImageError, OSError):
+            # Ignore invalid/missing optional demo asset.
+            continue
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Preflight verification
+# ---------------------------------------------------------------------------
 
 @app.post("/api/preflight")
 async def run_preflight(
@@ -111,45 +526,99 @@ async def run_preflight(
     doc_a_base64: Optional[str] = Form(None),
     doc_b_base64: Optional[str] = Form(None),
     lang: str = Form("en"),
-):
-    """Run full Preflight Verification:
-    1. Reads ingested images.
-    2. Performs DPDP Act in-RAM visual redaction on Aadhaar card.
-    3. Extracts structured entities via Gemma 4 harness.
-    4. Evaluates clerical discrepancies and calculates Readiness Score.
-    5. Generates layman plain-language explanation in requested language.
+) -> Dict[str, Any]:
     """
+    Run full JanSeva Preflight Verification.
+
+    Inputs:
+    - Document A upload/base64
+    - Document B upload/base64
+    - Language
+
+    Processing:
+    1. Load images in memory.
+    2. Redact Aadhaar image.
+    3. Extract document entities.
+    4. Run deterministic readiness verifier.
+    5. Generate explanation.
+    6. Return readiness report.
+    """
+
     try:
-        # Resolve doc_a
-        if doc_a:
+        # ---------------------------------------------------------------
+        # Document A
+        # ---------------------------------------------------------------
+
+        if doc_a is not None:
             img_a = read_image_from_upload(doc_a)
+
         elif doc_a_base64:
-            clean_b64 = doc_a_base64.split(",")[-1]
-            img_a = Image.open(io.BytesIO(base64.b64decode(clean_b64)))
-        else:
-            p = DEMO_DIR / "sample_aadhaar.png"
-            img_a = Image.open(p) if p.exists() else Image.new("RGB", (400, 250), "#fff")
+            img_a = image_from_base64(doc_a_base64)
 
-        # Resolve doc_b
-        if doc_b:
+        else:
+            try:
+                img_a = load_demo_image("sample_aadhaar.png")
+            except FileNotFoundError:
+                img_a = Image.new(
+                    "RGB",
+                    (400, 250),
+                    "white",
+                )
+
+        # ---------------------------------------------------------------
+        # Document B
+        # ---------------------------------------------------------------
+
+        if doc_b is not None:
             img_b = read_image_from_upload(doc_b)
+
         elif doc_b_base64:
-            clean_b64 = doc_b_base64.split(",")[-1]
-            img_b = Image.open(io.BytesIO(base64.b64decode(clean_b64)))
+            img_b = image_from_base64(doc_b_base64)
+
         else:
-            p = DEMO_DIR / "sample_ration.png"
-            img_b = Image.open(p) if p.exists() else Image.new("RGB", (400, 250), "#fff")
+            try:
+                img_b = load_demo_image("sample_ration.png")
+            except FileNotFoundError:
+                img_b = Image.new(
+                    "RGB",
+                    (400, 250),
+                    "white",
+                )
 
-        # 1. Apply DPDP Visual Redaction to Document A (Aadhaar)
+        # ---------------------------------------------------------------
+        # Privacy processing
+        # ---------------------------------------------------------------
+
         redacted_img_a = redact_aadhaar_image(img_a)
-        redacted_a_uri = pil_to_base64_data_uri(redacted_img_a, format="PNG")
-        doc_b_uri = pil_to_base64_data_uri(img_b, format="PNG")
 
-        # 2. Extract Entities via Gemma 4 Harness
-        entities_a = gemma_harness.extract_document_entities(img_a, doc_type_hint="aadhaar")
-        entities_b = gemma_harness.extract_document_entities(img_b, doc_type_hint="ration")
+        redacted_a_uri = pil_to_base64_data_uri(
+            redacted_img_a,
+            image_format="PNG",
+        )
 
-        # 3. Deterministic Preflight Cross-Verification
+        doc_b_uri = pil_to_base64_data_uri(
+            img_b,
+            image_format="PNG",
+        )
+
+        # ---------------------------------------------------------------
+        # Entity extraction
+        # ---------------------------------------------------------------
+
+        entities_a = gemma_harness.extract_document_entities(
+            img_a,
+            doc_type_hint="aadhaar",
+        )
+
+        entities_b = gemma_harness.extract_document_entities(
+            img_b,
+            doc_type_hint="ration",
+        )
+
+        # ---------------------------------------------------------------
+        # Deterministic readiness evaluation
+        # ---------------------------------------------------------------
+
         report = evaluate_readiness(
             entities_a,
             entities_b,
@@ -157,11 +626,26 @@ async def run_preflight(
             doc_b_name="Document B (Ration Card)",
         )
 
-        # 4. Layman Explanation
-        explanation = gemma_harness.explain_preflight_report(report.to_dict(), language=lang)
+        # ---------------------------------------------------------------
+        # Human-readable explanation
+        # ---------------------------------------------------------------
 
-        # 5. Record telemetry
+        language = normalize_language(lang)
+
+        explanation = gemma_harness.explain_preflight_report(
+            report.to_dict(),
+            language=language,
+        )
+
+        # ---------------------------------------------------------------
+        # Telemetry
+        # ---------------------------------------------------------------
+
         telemetry.record_preflight()
+
+        # ---------------------------------------------------------------
+        # Response
+        # ---------------------------------------------------------------
 
         return {
             "score": report.score,
@@ -170,7 +654,10 @@ async def run_preflight(
             "critical_count": report.critical_count,
             "warning_count": report.warning_count,
             "pass_count": report.pass_count,
-            "checks": [c.to_dict() for c in report.checks],
+            "checks": [
+                check.to_dict()
+                for check in report.checks
+            ],
             "explanation": explanation,
             "entities_a": entities_a,
             "entities_b": entities_b,
@@ -178,21 +665,63 @@ async def run_preflight(
             "doc_b_data_uri": doc_b_uri,
             "dpdp_redacted": True,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    except HTTPException:
+        raise
+
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    except Exception:
+        # Do not return raw exceptions because they may contain
+        # implementation details or sensitive information.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Preflight processing failed.",
+        )
 
 
-class RejectionRequest(BaseModel):
-    query: str
-
+# ---------------------------------------------------------------------------
+# Rejection decoder
+# ---------------------------------------------------------------------------
 
 @app.post("/api/decode-rejection")
-def decode_rejection(payload: RejectionRequest):
-    """Decode administrative error code or SMS notice against openZIM rejection archive."""
-    report = rejection_decoder.decode(payload.query)
-    telemetry.record_rejection_decoded()
-    return report.to_dict()
+def decode_rejection(
+    payload: RejectionRequest,
+) -> Dict[str, Any]:
+    """
+    Decode an administrative error code or rejection message
+    using the local openZIM rejection archive.
+    """
 
+    query = payload.query.strip()
+
+    if not query:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Rejection query must not be empty.",
+        )
+
+    try:
+        report = rejection_decoder.decode(query)
+
+        telemetry.record_rejection_decoded()
+
+        return report.to_dict()
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to decode the rejection notice.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Welfare schemes
+# ---------------------------------------------------------------------------
 
 @app.get("/api/schemes")
 def get_schemes(
@@ -200,42 +729,109 @@ def get_schemes(
     state: str = "All India",
     category: str = "All",
     is_farmer: bool = True,
-):
-    """Filter schemes from local .zim archive via python-libzim at 0ms latency."""
-    results = scheme_finder.filter_schemes(
-        search_query=q,
-        state=state if state != "All" else "All India",
-        category=category,
-        is_landowner=is_farmer,
-    )
-    telemetry.record_scheme_query()
-    return {
-        "count": len(results),
-        "schemes": results,
-        "zim_mounted": zim_engine.is_zim_active,
-    }
+) -> Dict[str, Any]:
+    """
+    Search/filter welfare schemes from the local ZIM archive.
+    """
 
+    try:
+        search_query = q.strip()
+
+        normalized_state = (
+            "All India"
+            if state.strip().lower() == "all"
+            else state.strip()
+        )
+
+        normalized_category = category.strip() or "All"
+
+        results = scheme_finder.filter_schemes(
+            search_query=search_query,
+            state=normalized_state,
+            category=normalized_category,
+            is_landowner=is_farmer,
+        )
+
+        telemetry.record_scheme_query()
+
+        return {
+            "count": len(results),
+            "schemes": results,
+            "zim_mounted": bool(zim_engine.is_zim_active),
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to search welfare schemes.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Telemetry
+# ---------------------------------------------------------------------------
 
 @app.get("/api/telemetry")
-def get_telemetry():
-    """Return edge kiosk metrics."""
-    data = telemetry.to_dict()
-    data["local_ip"] = get_local_ip()
-    data["zim_active"] = zim_engine.is_zim_active
-    return data
+def get_telemetry() -> Dict[str, Any]:
+    """Return non-PII kiosk metrics."""
 
+    try:
+        data = telemetry.to_dict()
+
+        try:
+            data["local_ip"] = get_local_ip()
+        except Exception:
+            data["local_ip"] = "127.0.0.1"
+
+        try:
+            data["zim_active"] = bool(
+                zim_engine.is_zim_active
+            )
+        except Exception:
+            data["zim_active"] = False
+
+        return data
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to retrieve telemetry.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Serve Mode / Hotspot QR
+# ---------------------------------------------------------------------------
 
 @app.get("/api/hotspot-qr")
-def get_hotspot_qr():
-    """Generate QR code pointing to this kiosk server."""
-    ip = get_local_ip()
-    url = f"http://{ip}:3000"
-    qr_img = generate_hotspot_qr(url)
-    return {
-        "url": url,
-        "qr_data_uri": pil_to_base64_data_uri(qr_img, format="PNG"),
-    }
+def get_hotspot_qr() -> Dict[str, str]:
+    """
+    Generate a QR code pointing to the local JanSeva kiosk UI.
+    """
 
+    try:
+        ip = get_local_ip()
+
+        if not ip:
+            ip = "127.0.0.1"
+
+        url = f"http://{ip}:3000"
+
+        qr_img = generate_hotspot_qr(url)
+
+        return {
+            "url": url,
+            "qr_data_uri": pil_to_base64_data_uri(
+                qr_img,
+                image_format="PNG",
+            ),
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to generate hotspot QR code.",
+        )
 
 class ScrapeRequest(BaseModel):
     url: str = "https://myscheme.gov.in"
@@ -251,13 +847,14 @@ class ScrapeRequest(BaseModel):
 @app.post("/api/scrape-to-zim")
 def trigger_scrape_to_zim(payload: ScrapeRequest):
     """Scrape welfare portal and compile directly to Kiwix openZIM archive."""
-    packs_dir = ROOT_DIR / "packs"
-    packs_dir.mkdir(parents=True, exist_ok=True)
+    PACKS_DIR.mkdir(parents=True, exist_ok=True)
 
     safe_name = (payload.output_name or "welfare_scraped.zim").strip()
     if not safe_name.endswith(".zim"):
         safe_name += ".zim"
-    out_file = packs_dir / safe_name
+    if not PACK_NAME_PATTERN.fullmatch(safe_name):
+        raise HTTPException(status_code=400, detail="Invalid output filename")
+    out_file = PACKS_DIR / safe_name
 
     scraper = WelfareZimScraper()
 
@@ -305,14 +902,13 @@ def trigger_scrape_to_zim(payload: ScrapeRequest):
 @app.get("/api/scraped-packs")
 def list_scraped_packs():
     """List all available .zim files in packs directory."""
-    packs_dir = ROOT_DIR / "packs"
-    if not packs_dir.exists():
+    if not PACKS_DIR.exists():
         return {"packs": []}
 
     packs = []
     scraper = WelfareZimScraper()
 
-    for p in packs_dir.glob("*.zim"):
+    for p in PACKS_DIR.glob("*.zim"):
         try:
             info = scraper.inspect_zim(p)
             packs.append({
@@ -341,15 +937,7 @@ def list_scraped_packs():
 @app.get("/api/download-zim/{filename}")
 def download_zim(filename: str):
     """Download compiled .zim archive for offline reading in Kiwix Desktop."""
-    packs_dir = ROOT_DIR / "packs"
-    safe_path = (packs_dir / filename).resolve()
-
-    # Prevent directory traversal
-    if not str(safe_path).startswith(str(packs_dir.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid file path")
-
-    if not safe_path.exists() or not safe_path.is_file():
-        raise HTTPException(status_code=404, detail="ZIM archive not found")
+    safe_path = resolve_safe_pack_path(filename)
 
     return FileResponse(
         path=safe_path,
@@ -361,12 +949,7 @@ def download_zim(filename: str):
 @app.get("/api/inspect-zim/{filename}")
 def inspect_zim_endpoint(filename: str):
     """Inspect contents and openZIM metadata of a specific .zim archive."""
-    packs_dir = ROOT_DIR / "packs"
-    safe_path = (packs_dir / filename).resolve()
-
-    if not str(safe_path).startswith(str(packs_dir.resolve())) or not safe_path.exists():
-        raise HTTPException(status_code=404, detail="ZIM archive not found")
-
+    safe_path = resolve_safe_pack_path(filename)
     try:
         scraper = WelfareZimScraper()
         return scraper.inspect_zim(safe_path)
@@ -378,14 +961,7 @@ def inspect_zim_endpoint(filename: str):
 @app.get("/api/zim-view/{filename}/{entry_path:path}")
 def view_zim_content(filename: str, entry_path: str = "index.html"):
     """Serve articles, stylesheets, vector icons, and pages directly from within the .zim archive using python-libzim."""
-    packs_dir = ROOT_DIR / "packs"
-    safe_path = (packs_dir / filename).resolve()
-
-    if not str(safe_path).startswith(str(packs_dir.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid path")
-    if not safe_path.exists() or not safe_path.is_file():
-        raise HTTPException(status_code=404, detail="ZIM archive not found")
-
+    safe_path = resolve_safe_pack_path(filename)
     try:
         archive = libzim.Archive(str(safe_path))
         target_path = entry_path.strip("/") if entry_path else "index.html"
