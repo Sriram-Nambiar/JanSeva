@@ -14,9 +14,9 @@ export default {
       },
       fontFamily: {
         anton: ['"Anton"', 'sans-serif'],
-        satoshi: ['"Satoshi"', '"Plus Jakarta Sans"', 'sans-serif'],
-        sans: ['"Satoshi"', '"Plus Jakarta Sans"', 'sans-serif'],
-        mono: ['"Space Mono"', 'monospace'],
+        inter: ['"Inter"', 'sans-serif'],
+        sans: ['"Inter"', 'sans-serif'],
+        mono: ['"Inter"', 'monospace'],
       },
       backgroundImage: {
         'grid-pattern': 'linear-gradient(to right, rgba(183, 198, 194, 0.25) 1px, transparent 1px), linear-gradient(to bottom, rgba(183, 198, 194, 0.25) 1px, transparent 1px)',
