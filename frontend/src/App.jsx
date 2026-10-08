@@ -30,6 +30,7 @@ export default function App() {
   const [scrapeStatusMsg, setScrapeStatusMsg] = useState(null);
   const [scrapedPacksList, setScrapedPacksList] = useState([]);
   const [inspectingPackData, setInspectingPackData] = useState(null);
+  const [viewingZimPack, setViewingZimPack] = useState('welfare_curated.zim');
 
   // Telemetry state
   const [kioskMetrics, setKioskMetrics] = useState({
@@ -973,17 +974,24 @@ export default function App() {
 
                         <div className="flex items-center gap-2 shrink-0">
                           <button
+                            onClick={() => setViewingZimPack(pack.filename)}
+                            className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider bg-[#2F5BFF] text-white hover:bg-[#1E40FF] transition-all flex items-center gap-1 font-semibold"
+                          >
+                            <span>BROWSE IN-APP</span>
+                            <span>▶</span>
+                          </button>
+                          <button
                             onClick={() => handleInspectPack(pack.filename)}
-                            className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider bg-white border border-[#0D0D0F]/15 hover:border-[#0D0D0F] transition-all"
+                            className="px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wider bg-white border border-[#0D0D0F]/15 hover:border-[#0D0D0F] transition-all"
                           >
                             INSPECT
                           </button>
                           <a
                             href={`/api/download-zim/${encodeURIComponent(pack.filename)}`}
                             download
-                            className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider bg-[#0D0D0F] text-white hover:bg-black transition-all flex items-center gap-1.5"
+                            className="px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wider bg-[#0D0D0F] text-white hover:bg-black transition-all flex items-center gap-1"
                           >
-                            <span>DOWNLOAD</span>
+                            <span>GET</span>
                             <span className="text-[#2F5BFF]">↓</span>
                           </a>
                         </div>
@@ -1071,6 +1079,46 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* In-App Offline openZIM Browser Frame */}
+          {viewingZimPack && (
+            <div className="mt-10 border-2 border-[#0D0D0F] bg-white text-[#0D0D0F] shadow-2xl">
+              <div className="bg-[#0D0D0F] text-white px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
+                <div className="flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="font-bold tracking-wider uppercase text-sm">
+                    IN-APP OFFLINE ZIM BROWSER // {viewingZimPack}
+                  </span>
+                  <span className="text-[10px] bg-[#2F5BFF]/20 text-[#7C97FF] px-2 py-0.5 rounded font-bold">
+                    0MS LOCAL STREAM VIA LIBZIM
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`/api/zim-view/${encodeURIComponent(viewingZimPack)}/index.html`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1 text-[10px] uppercase bg-white/10 hover:bg-white/20 transition-all text-white/90 font-semibold"
+                  >
+                    POPOUT FULLSCREEN ↗
+                  </a>
+                  <button
+                    onClick={() => setViewingZimPack(null)}
+                    className="px-3 py-1 text-[10px] uppercase bg-red-600/90 hover:bg-red-600 transition-all text-white font-bold"
+                  >
+                    CLOSE VIEWER [✕]
+                  </button>
+                </div>
+              </div>
+              <div className="w-full h-[640px] bg-white border-t border-[#0D0D0F]/15">
+                <iframe
+                  src={`/api/zim-view/${encodeURIComponent(viewingZimPack)}/index.html`}
+                  title={`Offline ZIM Viewer - ${viewingZimPack}`}
+                  className="w-full h-full border-none"
+                />
               </div>
             </div>
           )}

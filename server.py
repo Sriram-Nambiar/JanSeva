@@ -13,11 +13,12 @@ import io
 import os
 import pathlib
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from PIL import Image
+import libzim
 
 from scraper.models import ScraperConfig
 from scraper.welfare_scraper import WelfareZimScraper
@@ -369,5 +370,43 @@ def inspect_zim_endpoint(filename: str):
     try:
         scraper = WelfareZimScraper()
         return scraper.inspect_zim(safe_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/zim-view/{filename}")
+@app.get("/api/zim-view/{filename}/{entry_path:path}")
+def view_zim_content(filename: str, entry_path: str = "index.html"):
+    """Serve articles, stylesheets, vector icons, and pages directly from within the .zim archive using python-libzim."""
+    packs_dir = ROOT_DIR / "packs"
+    safe_path = (packs_dir / filename).resolve()
+
+    if not str(safe_path).startswith(str(packs_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not safe_path.exists() or not safe_path.is_file():
+        raise HTTPException(status_code=404, detail="ZIM archive not found")
+
+    try:
+        archive = libzim.Archive(str(safe_path))
+        target_path = entry_path.strip("/") if entry_path else "index.html"
+
+        if not target_path or target_path == "mainPage":
+            target_path = "index.html"
+
+        try:
+            entry = archive.get_entry_by_path(target_path)
+        except Exception:
+            try:
+                entry = archive.get_entry_by_path("index.html")
+            except Exception:
+                raise HTTPException(status_code=404, detail=f"Entry '{target_path}' not found in ZIM archive")
+
+        item = entry.get_item()
+        content = bytes(item.content)
+        mimetype = item.mimetype or "text/html"
+
+        return Response(content=content, media_type=mimetype)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
