@@ -82,6 +82,13 @@ export default function App() {
   // FAQ Accordion state
   const [openFaq, setOpenFaq] = useState(0);
 
+  // Gemma AI Copilot Chat state
+  const [mockAiActive, setMockAiActive] = useState(true);
+  const [lmStudioOnline, setLmStudioOnline] = useState(false);
+  const [chatPrompt, setChatPrompt] = useState('');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+
   // 1. Initial Load: Check Backend Health, Fetch Demo Assets, Load Schemes, Telemetry
   useEffect(() => {
     checkHealth();
@@ -104,9 +111,47 @@ export default function App() {
         const data = await res.json();
         setBackendOnline(true);
         setZimMounted(data.zim_mounted);
+        setMockAiActive(data.mock_ai ?? true);
+        setLmStudioOnline(data.lm_studio_online ?? false);
       }
     } catch (e) {
       setBackendOnline(false);
+    }
+  };
+
+  const sendChatMessage = async (userText) => {
+    if (!userText || !userText.trim()) return;
+    const text = userText.trim();
+    setChatPrompt('');
+    setChatMessages((prev) => [...prev, { role: 'user', text }]);
+    setIsChatLoading(true);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: text }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: data.response, provider: data.provider },
+        ]);
+      } else {
+        const err = await res.json();
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: `Error (${res.status}): ${err.detail || 'Failed to process request'}` },
+        ]);
+      }
+    } catch (e) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: `Connection Error: ${e.message}` },
+      ]);
+    } finally {
+      setIsChatLoading(false);
     }
   };
 
@@ -813,12 +858,94 @@ export default function App() {
                   </div>
                 ))}
               </div>
-
             </div>
           )}
 
-        </div>
-      </section>
+            {/* Gemma AI Copilot Assistant Interactive Panel */}
+            <div className="mt-10 pt-8 border-t border-stone-100">
+              <div className="bg-cream rounded-3xl p-6 border border-stone-200/80 shadow-soft">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-coral flex items-center justify-center text-white shadow-soft">
+                      <Sparkles className="w-4.5 h-4.5 text-soft-black" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-medium text-soft-black">
+                        Gemma 4 AI Preflight Copilot
+                      </h4>
+                      <span className="text-[11px] text-stone-500">
+                        Provider: <strong className="text-coral">{mockAiActive ? 'Mock AI Harness (Safe 8GB RAM Mode)' : 'LM Studio Gemma 4 Local'}</strong>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className={`px-2.5 py-1 rounded-full font-medium border ${mockAiActive ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-emerald-100 text-emerald-800 border-emerald-200'}`}>
+                      {mockAiActive ? '⚡ Mock Mode Active' : '🤖 LM Studio Connected'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Chat Message Box */}
+                <div className="bg-white rounded-2xl p-4 max-h-64 overflow-y-auto border border-stone-200/60 mb-4 space-y-3 shadow-inner">
+                  {chatMessages.length === 0 ? (
+                    <div className="text-xs text-soft-muted text-center py-6">
+                      Ask any welfare preflight or clerical discrepancy question...
+                      <br />
+                      <span className="text-[10px] text-stone-400 mt-1 inline-block">
+                        Try: 'Why does an initial mismatch in Ration Card reject PM-KISAN?'
+                      </span>
+                    </div>
+                  ) : (
+                    chatMessages.map((msg, i) => (
+                      <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs ${
+                          msg.role === 'user' 
+                            ? 'bg-soft-black text-white rounded-br-none' 
+                            : 'bg-sage/60 text-stone-800 rounded-bl-none border border-emerald-200/60'
+                        }`}>
+                          <p className="leading-relaxed">{msg.text}</p>
+                          {msg.provider && (
+                            <span className="text-[9px] text-emerald-700 font-semibold block mt-1 opacity-80">
+                              via {msg.provider}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  {isChatLoading && (
+                    <div className="flex items-start">
+                      <div className="bg-sage/40 rounded-2xl px-4 py-2.5 text-xs text-stone-600 rounded-bl-none border border-emerald-200/40 flex items-center gap-2">
+                        <RotateCcw className="w-3.5 h-3.5 animate-spin text-coral" />
+                        <span>Gemma 4 generating response...</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Chat Form */}
+                <form onSubmit={(e) => { e.preventDefault(); sendChatMessage(chatPrompt); }} className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Ask JanSeva AI Copilot about welfare application rules..."
+                    value={chatPrompt}
+                    onChange={(e) => setChatPrompt(e.target.value)}
+                    className="flex-1 px-4 py-2.5 rounded-full bg-white border border-stone-200 text-xs text-soft-black focus:outline-none focus:border-coral"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isChatLoading || !chatPrompt.trim()}
+                    className="bg-coral text-soft-black px-6 py-2.5 rounded-full text-xs font-medium shadow-coral-glow disabled:opacity-50 hover:opacity-95 transition-all flex items-center gap-1.5"
+                  >
+                    <span>Send</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              </div>
+            </div>
+
+          </div>
+        </section>
 
       {/* THREE-MOCKUP APP EXPERIENCE PREVIEW (TACTILE SANCTUARY) */}
       <section className="py-20 md:py-32 px-4 relative flex flex-col items-center">

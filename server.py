@@ -1,7 +1,7 @@
 """JanSeva 2.0 FastAPI Backend Server.
 
 Bridges the React frontend to the JanSeva core engines:
-- Gemma 4 Multimodal Harness
+- Gemma 4 Multimodal Harness (LM Studio local provider)
 - DPDP Act 2023 In-RAM PII Redactor & Verhoeff Validator
 - Preflight Verification & Application Readiness Scoring Engine
 - openZIM / Kiwix python-libzim Knowledge Retrieval
@@ -13,12 +13,22 @@ import io
 import os
 import pathlib
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from PIL import Image
+from dotenv import load_dotenv
 
-from core.gemma_harness import GemmaHarness
+load_dotenv()
+
+from core.gemma_harness import (
+    GemmaHarness,
+    LMStudioError,
+    LMStudioConnectionError,
+    ModelNotConfiguredError,
+    LMStudioAPIError,
+    is_mock_mode,
+)
 from core.privacy import (
     extract_and_mask_id,
     mask_aadhaar_text,
@@ -33,10 +43,10 @@ from core.zim_engine import WelfareZimEngine
 
 app = FastAPI(title="JanSeva API", version="2.0.0")
 
-# Enable CORS for local Vite development
+# Enable CORS for React frontend (http://localhost:3000) and dev clients
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -53,6 +63,10 @@ ROOT_DIR = pathlib.Path(__file__).parent
 DEMO_DIR = ROOT_DIR / "demo_assets"
 
 
+class ChatRequest(BaseModel):
+    prompt: str = Field(..., description="Prompt string to analyze or send to Gemma AI")
+
+
 def pil_to_base64_data_uri(img: Image.Image, format="JPEG") -> str:
     """Convert PIL image to base64 data URI."""
     buf = io.BytesIO()
@@ -67,15 +81,94 @@ def read_image_from_upload(upload_file: UploadFile) -> Image.Image:
     return Image.open(io.BytesIO(contents))
 
 
+@app.get("/")
+def read_root():
+    return {
+        "application": "JanSeva",
+        "version": "2.0",
+        "status": "running",
+    }
+
+
+@app.get("/health")
 @app.get("/api/health")
 def health_check():
     return {
         "status": "online",
-        "app": "JanSeva 2.0",
+        "application": "JanSeva",
+        "version": "2.0",
+        "mock_ai": is_mock_mode(),
+        "lm_studio_online": gemma_harness.is_lm_studio_online(),
         "zim_mounted": zim_engine.is_zim_active,
         "ollama_online": gemma_harness.is_ollama_online(),
         "local_ip": get_local_ip(),
     }
+
+
+@app.get("/api/models")
+def get_models():
+    """Return available models from LM Studio."""
+    try:
+        models = gemma_harness.get_available_models()
+        return {"models": models, "count": len(models)}
+    except LMStudioConnectionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e),
+        )
+    except LMStudioError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching models: {str(e)}",
+        )
+
+
+@app.post("/api/chat")
+def chat(payload: ChatRequest):
+    """Chat endpoint supporting LM Studio local Gemma harness and Mock Mode."""
+    if not payload.prompt or not payload.prompt.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Prompt must not be empty.",
+        )
+
+    if is_mock_mode():
+        return {
+            "response": "Mock JanSeva AI response: document requires human verification.",
+            "provider": "mock",
+        }
+
+    try:
+        response_text = gemma_harness.send_chat_request(payload.prompt)
+        return {
+            "response": response_text,
+            "provider": "lm-studio",
+        }
+    except ModelNotConfiguredError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except LMStudioConnectionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e),
+        )
+    except LMStudioAPIError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"AI provider request failed: {str(e)}",
+        )
 
 
 @app.get("/api/demo-assets")
@@ -107,15 +200,8 @@ async def run_preflight(
     doc_b_base64: Optional[str] = Form(None),
     lang: str = Form("en"),
 ):
-    """Run full Preflight Verification:
-    1. Reads ingested images.
-    2. Performs DPDP Act in-RAM visual redaction on Aadhaar card.
-    3. Extracts structured entities via Gemma 4 harness.
-    4. Evaluates clerical discrepancies and calculates Readiness Score.
-    5. Generates layman plain-language explanation in requested language.
-    """
+    """Run full Preflight Verification."""
     try:
-        # Resolve doc_a
         if doc_a:
             img_a = read_image_from_upload(doc_a)
         elif doc_a_base64:
@@ -125,7 +211,6 @@ async def run_preflight(
             p = DEMO_DIR / "sample_aadhaar.png"
             img_a = Image.open(p) if p.exists() else Image.new("RGB", (400, 250), "#fff")
 
-        # Resolve doc_b
         if doc_b:
             img_b = read_image_from_upload(doc_b)
         elif doc_b_base64:
@@ -135,16 +220,13 @@ async def run_preflight(
             p = DEMO_DIR / "sample_ration.png"
             img_b = Image.open(p) if p.exists() else Image.new("RGB", (400, 250), "#fff")
 
-        # 1. Apply DPDP Visual Redaction to Document A (Aadhaar)
         redacted_img_a = redact_aadhaar_image(img_a)
         redacted_a_uri = pil_to_base64_data_uri(redacted_img_a, format="PNG")
         doc_b_uri = pil_to_base64_data_uri(img_b, format="PNG")
 
-        # 2. Extract Entities via Gemma 4 Harness
         entities_a = gemma_harness.extract_document_entities(img_a, doc_type_hint="aadhaar")
         entities_b = gemma_harness.extract_document_entities(img_b, doc_type_hint="ration")
 
-        # 3. Deterministic Preflight Cross-Verification
         report = evaluate_readiness(
             entities_a,
             entities_b,
@@ -152,10 +234,7 @@ async def run_preflight(
             doc_b_name="Document B (Ration Card)",
         )
 
-        # 4. Layman Explanation
         explanation = gemma_harness.explain_preflight_report(report.to_dict(), language=lang)
-
-        # 5. Record telemetry
         telemetry.record_preflight()
 
         return {
